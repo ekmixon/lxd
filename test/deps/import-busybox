@@ -70,10 +70,15 @@ class LXD(object):
             data["project"] = self.project
             self.lxd.request(
                 method,
-                "%s?%s" % "&".join(["%s=%s" % (key, value)
-                                    for key, value in data.items()]), headers)
+                (
+                    "%s?%s"
+                    % "&".join([f"{key}={value}" for key, value in data.items()])
+                ),
+                headers,
+            )
+
         else:
-            path += "?project=%s" % self.project
+            path += f"?project={self.project}"
             self.lxd.request(method, path, data, headers)
 
         r = self.lxd.getresponse()
@@ -87,14 +92,13 @@ class LXD(object):
         status, data = self.rest_call("/1.0/images/aliases", data, "POST")
 
         if status not in (200, 201):
-            raise Exception("Failed to create alias: %s" % name)
+            raise Exception(f"Failed to create alias: {name}")
 
     def aliases_remove(self, name):
-        status, data = self.rest_call("/1.0/images/aliases/%s" % name,
-                                      method="DELETE")
+        status, data = self.rest_call(f"/1.0/images/aliases/{name}", method="DELETE")
 
         if status != 200:
-            raise Exception("Failed to remove alias: %s" % name)
+            raise Exception(f"Failed to remove alias: {name}")
 
     def aliases_list(self):
         status, data = self.rest_call("/1.0/images/aliases")
@@ -124,44 +128,40 @@ class LXD(object):
         else:
             meta_path, rootfs_path = path
             boundary = str(uuid.uuid1())
-            filename_entry = " filename=%s" % filename if filename else ""
+            filename_entry = f" filename={filename}" if filename else ""
 
             upload_path = os.path.join(self.workdir, "upload")
-            body = open(upload_path, "wb+")
-            for name, path in [("metadata", meta_path),
-                               ("rootfs", rootfs_path)]:
-                body.write(bytes("--%s\r\n" % boundary, "utf-8"))
-                body.write(bytes("Content-Disposition: form-data; "
-                                 "name=%s;%s\r\n" % (name, filename_entry),
-                                 "utf-8"))
-                body.write(b"Content-Type: application/octet-stream\r\n")
-                body.write(b"\r\n")
-                with open(path, "rb") as fd:
-                    shutil.copyfileobj(fd, body)
-                body.write(b"\r\n")
+            with open(upload_path, "wb+") as body:
+                for name, path in [("metadata", meta_path),
+                                   ("rootfs", rootfs_path)]:
+                    body.write(bytes("--%s\r\n" % boundary, "utf-8"))
+                    body.write(bytes("Content-Disposition: form-data; "
+                                     "name=%s;%s\r\n" % (name, filename_entry),
+                                     "utf-8"))
+                    body.write(b"Content-Type: application/octet-stream\r\n")
+                    body.write(b"\r\n")
+                    with open(path, "rb") as fd:
+                        shutil.copyfileobj(fd, body)
+                    body.write(b"\r\n")
 
-            body.write(bytes("--%s--\r\n" % boundary, "utf-8"))
-            body.write(b"\r\n")
-            body.close()
-
-            headers['Content-Type'] = "multipart/form-data; boundary=%s" \
-                % boundary
+                body.write(bytes("--%s--\r\n" % boundary, "utf-8"))
+                body.write(b"\r\n")
+            headers['Content-Type'] = f"multipart/form-data; boundary={boundary}"
 
             status, data = self.rest_call("/1.0/images",
                                           open(upload_path, "rb"),
                                           "POST", headers)
 
         if status != 202:
-            raise Exception("Failed to upload the image: %s" % status)
+            raise Exception(f"Failed to upload the image: {status}")
 
         status, data = self.rest_call(data['operation'] + "/wait",
                                       "", "GET", {})
         if status != 200:
-            raise Exception("Failed to query the operation: %s" % status)
+            raise Exception(f"Failed to query the operation: {status}")
 
         if data['status_code'] != 200:
-            raise Exception("Failed to import the image: %s" %
-                            data['metadata'])
+            raise Exception(f"Failed to import the image: {data['metadata']}")
 
         return data['metadata']['metadata']
 
@@ -189,15 +189,17 @@ class BusyBox(object):
                                                   "busybox.rootfs.tar")
             target_tarball_rootfs = tarfile.open(destination_tar_rootfs, "w:")
 
-        metadata = {'architecture': os.uname()[4],
-                    'creation_date': int(os.stat("/bin/busybox").st_ctime),
-                    'properties': {
-                        'os': "BusyBox",
-                        'architecture': os.uname()[4],
-                        'description': "BusyBox %s" % os.uname()[4],
-                        'name': "busybox-%s" % os.uname()[4]
-                        },
-                    }
+        metadata = {
+            'architecture': os.uname()[4],
+            'creation_date': int(os.stat("/bin/busybox").st_ctime),
+            'properties': {
+                'os': "BusyBox",
+                'architecture': os.uname()[4],
+                'description': f"BusyBox {os.uname()[4]}",
+                'name': f"busybox-{os.uname()[4]}",
+            },
+        }
+
 
         # Add busybox
         with open("/bin/busybox", "rb") as fd:
@@ -226,10 +228,10 @@ class BusyBox(object):
             symlink_file.type = tarfile.SYMTYPE
             symlink_file.linkname = "/bin/busybox"
             if split:
-                symlink_file.name = "%s" % path.strip()
+                symlink_file.name = f"{path.strip()}"
                 target_tarball_rootfs.addfile(symlink_file)
             else:
-                symlink_file.name = "rootfs/%s" % path.strip()
+                symlink_file.name = f"rootfs/{path.strip()}"
                 target_tarball.addfile(symlink_file)
 
         # Add directories
@@ -237,10 +239,10 @@ class BusyBox(object):
             directory_file = tarfile.TarInfo()
             directory_file.type = tarfile.DIRTYPE
             if split:
-                directory_file.name = "%s" % path
+                directory_file.name = f"{path}"
                 target_tarball_rootfs.addfile(directory_file)
             else:
-                directory_file.name = "rootfs/%s" % path
+                directory_file.name = f"rootfs/{path}"
                 target_tarball.addfile(directory_file)
 
         # Deal with templating
@@ -295,19 +297,14 @@ user.foo: {{ config_get("user.foo", "_unset_") }}
         if split:
             target_tarball_rootfs.close()
 
-        # Compress the tarball
-        r = subprocess.call([xz, "-9", destination_tar])
-        if r:
-            raise Exception("Failed to compress: %s" % destination_tar)
+        if r := subprocess.call([xz, "-9", destination_tar]):
+            raise Exception(f"Failed to compress: {destination_tar}")
 
-        if split:
-            r = subprocess.call([xz, "-9", destination_tar_rootfs])
-            if r:
-                raise Exception("Failed to compress: %s" %
-                                destination_tar_rootfs)
-            return destination_tar + ".xz", destination_tar_rootfs + ".xz"
-        else:
-            return destination_tar + ".xz"
+        if not split:
+            return f"{destination_tar}.xz"
+        if r := subprocess.call([xz, "-9", destination_tar_rootfs]):
+            raise Exception(f"Failed to compress: {destination_tar_rootfs}")
+        return f"{destination_tar}.xz", f"{destination_tar_rootfs}.xz"
 
 
 if __name__ == "__main__":
@@ -327,7 +324,7 @@ if __name__ == "__main__":
             if alias in existing:
                 lxd.aliases_remove(alias)
             lxd.aliases_create(alias, fingerprint)
-            print("Setup alias: %s" % alias)
+            print(f"Setup alias: {alias}")
 
     def import_busybox(parser, args):
         busybox = BusyBox()
@@ -350,7 +347,6 @@ if __name__ == "__main__":
                                       meta_path.split("/")[-1])
             else:
                 r = lxd.images_upload((meta_path, rootfs_path), args.public)
-            print("Image imported as: %s" % r['fingerprint'])
         else:
             path = busybox.create_tarball(template=args.template.split(","))
 
@@ -361,8 +357,7 @@ if __name__ == "__main__":
                 parser.exit(1, "This image is already in the store.\n")
 
             r = lxd.images_upload(path, args.public)
-            print("Image imported as: %s" % r['fingerprint'])
-
+        print(f"Image imported as: {r['fingerprint']}")
         setup_alias(args.alias, fingerprint)
 
     parser = FriendlyParser(description="Import a busybox image")
